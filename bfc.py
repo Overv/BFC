@@ -189,6 +189,7 @@ class CodeGenerator:
 
     def __init__(self, tree):
         self.tree = tree
+        self.nesting = 0
 
     # Generate machine code for parsed syntax tree
     def generate(self):
@@ -213,19 +214,23 @@ class CodeGenerator:
             loop_start = len(self.code)
 
             self.code += '\x80\x3C\x24\x00'
-            self.code += '\x0F\x84ENDD'
+            self.code += '\x0F\x84\xFF\xFF\xFF' + chr(self.nesting)
 
             body_start = len(self.code)
 
+            self.nesting += 1
+
             for node in node.nodes:
                 self.write(node)
+
+            self.nesting -= 1
 
             self.code += '\xE9STRT'
 
             loop_end = len(self.code)
 
             # Fill in relative addresses
-            self.code = self.code.replace('ENDD', struct.pack('<i', loop_end - body_start))
+            self.code = self.code.replace('\xFF\xFF\xFF' + chr(self.nesting), struct.pack('<i', loop_end - body_start))
             self.code = self.code.replace('STRT', struct.pack('<i', loop_start - loop_end))
         elif isinstance(node, IncPtrNode):
             self.dec_reg(self.ESP)
