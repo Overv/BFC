@@ -208,14 +208,33 @@ class CodeGenerator:
                 self.write(node)
 
             self.write_end()
+        elif isinstance(node, LoopNode):
+            # Generate loop code and body with dummy addresses
+            loop_start = len(self.code)
+
+            self.code += '\x80\x3C\x24\x00'
+            self.code += '\x0F\x84ENDD'
+
+            body_start = len(self.code)
+
+            for node in node.nodes:
+                self.write(node)
+
+            self.code += '\xE9STRT'
+
+            loop_end = len(self.code)
+
+            # Fill in relative addresses
+            self.code = self.code.replace('ENDD', struct.pack('<i', loop_end - body_start))
+            self.code = self.code.replace('STRT', struct.pack('<i', loop_start - loop_end))
         elif isinstance(node, IncPtrNode):
             self.dec_reg(self.ESP)
         elif isinstance(node, DecPtrNode):
             self.inc_reg(self.ESP)
         elif isinstance(node, IncByteNode):
-            self.inc_esp_addr()
+            self.code += '\xFE\x04\x24' # TODO
         elif isinstance(node, DecByteNode):
-            self.dec_esp_addr()
+            self.code += '\xFE\x0C\x24' # TODO
         elif isinstance(node, OutputNode):
             self.mov_ri(self.EAX, 0x4)
             self.mov_ri(self.EBX, 0x1)
@@ -265,12 +284,6 @@ class CodeGenerator:
     def dec_reg(self, reg):
         self.code += chr(self.DEC + reg)
 
-    def inc_esp_addr(self):
-        self.code += '\xFE\x04\x24' # TODO
-
-    def dec_esp_addr(self):
-        self.code += '\xFE\x0C\x24' # TODO
-
     def int(self, name):
         self.code += chr(self.INT) + chr(name)
 
@@ -295,7 +308,7 @@ class Linker:
 
     # Write 32-bit ELF executable with generated machine code
     def write(self, filename):
-        with open(filename, 'w') as f:
+        with open(filename, 'wb') as f:
             self.write_header(f)
             self.write_program_header(f)
             f.write(code)

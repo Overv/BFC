@@ -110,13 +110,15 @@ int 0x80
 
 **[**
 ```nasm
-test [esp], 0
-je 0x00000000 ; instruction after end of loop
+loop:
+    cmp [esp], 0
+    je loop_end
 ```
 
 **]**
 ```nasm
-jmp 0x00000000 ; beginning of loop instruction
+    jmp loop
+loop_end:
 ```
 
 **EOF**
