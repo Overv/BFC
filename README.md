@@ -7,10 +7,11 @@ file and outputs native code in the form of a 32-bit ELF executable. The
 executable only depends on Linux syscalls, not the C library or anything else.
 This is basically as fast as unoptimized brainfuck code is going to get.
 
-The output program uses the stack for its memory, so the exact amount of memory
-available at runtime depends on the platform. This is typically more than 1 MB
-(1048576 cells), which is more than enough to run even complex programs like the
-mandelbrot renderer.
+The output program allocates 1 MB (1048576 cells) of memory on the stack for the
+tape. That is more than enough, even for complex programs like the [mandelbrot
+renderer](http://esoteric.sange.fi/brainfuck/utils/mandelbrot/mandelbrot.b) by
+Erik Bosman. Because the stack grows downwards, the increase and decrease
+pointer operations are reversed in the output code.
 
 Although a language like C is generally more suitable for low-level development
 like this, I decided to implement it in Python because it makes the code simply
@@ -65,16 +66,18 @@ write or read memory where it shouldn't. Because the behaviour of brainfuck is
 rather hard to predict, the only solution would be to add bounds checks to every
 read and write, but all these branches would significantly impact performance.
 
-The code generated for each token is listed below.
+The code generated for each token is listed below. Input and output is handled
+by the read and write syscalls on Linux. They are called using interrupt `0x80`.
+The exit syscall is used to end the program.
 
 **>**
 ```nasm
-inc esp
+dec esp
 ```
 
 **<**
 ```nasm
-dec esp
+inc esp
 ```
 
 **+**
@@ -89,12 +92,20 @@ dec [esp]
 
 **.**
 ```nasm
-; TODO
+mov eax, 0x4 ; write
+mov ebx, 0x1 ; stdout
+mov ecx, esp
+mov edx, 0x1 ; write 1 byte at pointer
+int 0x80
 ```
 
 **,**
 ```nasm
-; TODO
+mov eax, 0x3 ; read
+mov ebx, 0x0 ; stdin
+mov ecx, esp
+mov edx, 0x1 ; read 1 byte to pointer
+int 0x80
 ```
 
 **[**
@@ -110,9 +121,9 @@ jmp 0x00000000 ; beginning of loop instruction
 
 **EOF**
 ```nasm
-mov eax, 1
-mov ebx, 0
-int 0x80 ; exit syscall (EXIT_SUCCESS)
+mov eax, 1 ; exit
+mov ebx, 0 ; EXIT_SUCCESS (= 0)
+int 0x80
 ```
 
 It may be an interesting experiment to mark the code section itself as writable
