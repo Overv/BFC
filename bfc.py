@@ -156,11 +156,63 @@ class Parser:
         return LoopNode(nodes)
 
 #
+# Code generator
+#
+
+class CodeGenerator:
+    def __init__(self, tree):
+        self.tree = tree
+
+    # Generate machine code for parsed syntax tree
+    def generate(self, node = None):
+        self.code = ''
+
+        # Write program node
+        self.write(self.tree)
+
+        return self.code
+
+    # Write machine code for a node
+    def write(self, node):
+        if isinstance(node, ProgramNode):
+            self.write_start()
+
+            for node in node.nodes:
+                self.write(node)
+
+            self.write_end()
+        elif isinstance(node, IncByteNode):
+            self.code += '\xFE\x04\x24'
+        elif isinstance(node, OutputNode):
+            self.code += '\xB8\x04\x00\x00\x00'
+            self.code += '\xBB\x01\x00\x00\x00'
+            self.code += '\x89\xE1'
+            self.code += '\xBA\x01\x00\x00\x00'
+            self.code += '\xCD\x80'
+        else:
+            raise Exception('unsupported node ' + str(node))
+
+    # Write program start code that initializes memory
+    def write_start(self):
+        self.code += '\x31\xC0'
+        self.code += '\xB9\x00\x00\x04\x00'
+        self.code += '\x89\xE7'
+        self.code += '\xFD'
+        self.code += '\xF3\xAA'
+
+    # Write program exit code
+    def write_end(self):
+        self.code += '\x31\xC0'
+        self.code += '\x40'
+        self.code += '\x31\xDB'
+        self.code += '\xCD\x80'
+
+#
 # Linker
 #
 
 class Linker:
-    # Byte size of ELF file structures (ELF header and program header)
+    # ELF details
     ELF_HDR_SIZE = 52
     PRO_HDR_SIZE = 32
     LOAD_ADDRESS = 0x08048000
@@ -172,7 +224,7 @@ class Linker:
     def write(self, filename):
         with open(filename, 'w') as f:
             self.write_header(f)
-            self.write_program_header(f, len(self.code))
+            self.write_program_header(f)
             f.write(code)
 
     # Write ELF header
@@ -205,8 +257,8 @@ class Linker:
     # Write single program header entry
     # It is common to simply load the entire executable into memory.
     # http://www.sco.com/developers/gabi/1998-04-29/ch5.pheader.html
-    def write_program_header(self, f, code_size):
-        file_size = self.ELF_HDR_SIZE + self.PRO_HDR_SIZE + code_size
+    def write_program_header(self, f):
+        file_size = self.ELF_HDR_SIZE + self.PRO_HDR_SIZE + len(self.code)
 
         f.write(struct.pack('<I', 1)) # Load section into memory
         f.write(struct.pack('<I', 0)) # File offset
@@ -243,8 +295,7 @@ if __name__ == '__main__':
         sys.exit(1)
 
     # Generate code
-    # TODO
-    code = '\xB8\x01\x00\x00\x00\xBB\x2A\x00\x00\x00\xCD\x80'
+    code = CodeGenerator(tree).generate()
 
     # Write executable
     executable_name = os.path.splitext(sys.argv[1])[0]
