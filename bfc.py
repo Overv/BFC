@@ -160,11 +160,38 @@ class Parser:
 #
 
 class CodeGenerator:
+    # x86 reference (addressing modes and opcodes)
+    # http://ref.x86asm.net/coder32-abc.html
+
+    # Instructions
+    MOV_REG_IMM = 0xB8
+    MOV_REG_REG = 0x89
+    XOR = 0x31
+    INC = 0x40
+    DEC = 0x48
+    INT = 0xCD
+    STD = 0xFD
+    REP = 0xF3
+    STOSD = 0xAB
+
+    # Addressing modes
+    MOD_RR = 0b11 # register/register
+
+    # Registers
+    EAX = 0b000
+    ECX = 0b001
+    EDX = 0b010
+    EBX = 0b011
+    ESP = 0b100
+    EBP = 0b101
+    ESI = 0b110
+    EDI = 0b111
+
     def __init__(self, tree):
         self.tree = tree
 
     # Generate machine code for parsed syntax tree
-    def generate(self, node = None):
+    def generate(self):
         self.code = ''
 
         # Write program node
@@ -181,31 +208,77 @@ class CodeGenerator:
                 self.write(node)
 
             self.write_end()
+        elif isinstance(node, IncPtrNode):
+            self.dec_reg(self.ESP)
+        elif isinstance(node, DecPtrNode):
+            self.inc_reg(self.ESP)
         elif isinstance(node, IncByteNode):
-            self.code += '\xFE\x04\x24'
+            self.inc_esp_addr()
+        elif isinstance(node, DecByteNode):
+            self.dec_esp_addr()
         elif isinstance(node, OutputNode):
-            self.code += '\xB8\x04\x00\x00\x00'
-            self.code += '\xBB\x01\x00\x00\x00'
-            self.code += '\x89\xE1'
-            self.code += '\xBA\x01\x00\x00\x00'
-            self.code += '\xCD\x80'
+            self.mov_ri(self.EAX, 0x4)
+            self.mov_ri(self.EBX, 0x1)
+            self.mov_rr(self.ECX, self.ESP)
+            self.mov_ri(self.EDX, 0x1)
+            self.int(0x80)
+        elif isinstance(node, InputNode):
+            self.mov_ri(self.EAX, 0x3)
+            self.mov_ri(self.EBX, 0x0)
+            self.mov_rr(self.ECX, self.ESP)
+            self.mov_ri(self.EDX, 0x1)
+            self.int(0x80)
         else:
             raise Exception('unsupported node ' + str(node))
 
     # Write program start code that initializes memory
     def write_start(self):
-        self.code += '\x31\xC0'
-        self.code += '\xB9\x00\x00\x04\x00'
-        self.code += '\x89\xE7'
-        self.code += '\xFD'
-        self.code += '\xF3\xAA'
+        self.xor(self.EAX, self.EAX)
+        self.mov_ri(self.ECX, 0x40000)
+        self.mov_rr(self.EDI, self.ESP)
+        self.std()
+        self.rep_stos()
 
     # Write program exit code
     def write_end(self):
-        self.code += '\x31\xC0'
-        self.code += '\x40'
-        self.code += '\x31\xDB'
-        self.code += '\xCD\x80'
+        self.xor(self.EAX, self.EAX)
+        self.inc_reg(self.EAX)
+        self.xor(self.EBX, self.EBX)
+        self.int(0x80)
+
+    # Assembler functions
+    def mov_ri(self, dst, val):
+        self.code += chr(self.MOV_REG_IMM + dst)
+        self.code += struct.pack('<I', val)
+
+    def mov_rr(self, dst, src):
+        self.code += chr(self.MOV_REG_REG)
+        self.code += chr(dst | src << 3 | self.MOD_RR << 6)
+
+    def xor(self, dst, src):
+        self.code += chr(self.XOR)
+        self.code += chr(dst | src << 3 | self.MOD_RR << 6)
+
+    def inc_reg(self, reg):
+        self.code += chr(self.INC + reg)
+
+    def dec_reg(self, reg):
+        self.code += chr(self.DEC + reg)
+
+    def inc_esp_addr(self):
+        self.code += '\xFE\x04\x24' # TODO
+
+    def dec_esp_addr(self):
+        self.code += '\xFE\x0C\x24' # TODO
+
+    def int(self, name):
+        self.code += chr(self.INT) + chr(name)
+
+    def std(self):
+        self.code += chr(self.STD)
+
+    def rep_stos(self):
+        self.code += chr(self.REP) + chr(self.STOSD)
 
 #
 # Linker
