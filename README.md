@@ -25,10 +25,23 @@ Usage
 Prepare a brainfuck source file, like `tests/hello.bf` and invoke the compiler
 by running:
 
-    ./bfc.py hello.bf
+    $ ./bfc.py hello.bf
 
 If the file could be read and correctly parsed, then an executable named `hello`
 will be produced in the same directory.
+
+    $ ./hello
+    Hello World!
+
+Tests
+-----
+
+Some sample brainfuck programs have been included for testing the compiler.
+
+- **hello**: Hello world
+- **infinite**: Infinite loop
+- **mandelbrot**: 128x48 ascii mandelbrot renderer by Erik Bosman
+- **rot13**: ROT13 cipher
 
 Details
 -------
