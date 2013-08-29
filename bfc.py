@@ -173,6 +173,8 @@ class CodeGenerator:
     STD = 0xFD
     REP = 0xF3
     STOSD = 0xAB
+    JMP = 0xE9
+    JE = '\x0F\x84'
 
     # Addressing modes
     MOD_RR = 0b11 # register/register
@@ -186,6 +188,9 @@ class CodeGenerator:
     EBP = 0b101
     ESI = 0b110
     EDI = 0b111
+
+    # Interrupts
+    SYSCALL = 0x80
 
     def __init__(self, tree):
         self.tree = tree
@@ -213,7 +218,7 @@ class CodeGenerator:
             code += self.xor(self.EAX, self.EAX)
             code += self.inc_reg(self.EAX)
             code += self.xor(self.EBX, self.EBX)
-            code += self.int(0x80)
+            code += self.int(self.SYSCALL)
         elif isinstance(node, LoopNode):
             # First generate code for loop body to calculate relative jumps
             body_code = ''
@@ -222,14 +227,14 @@ class CodeGenerator:
                 body_code += self.generate(node)
 
             # Add loop prelude with conditional jump to end of loop
-            code += '\x80\x3C\x24\x00'
-            code += '\x0F\x84' + struct.pack('<i', len(body_code) + 5)
+            code += self.cmp_esp_byte(0)
+            code += self.je(len(body_code) + 5)
 
             # Append the loop body code
             code += body_code
 
             # And finally add the unconditional jump back to the beginning
-            code += '\xE9' + struct.pack('<i', -len(body_code) - 15)
+            code += self.jmp(-len(body_code) - 15)
         elif isinstance(node, IncPtrNode):
             # Move 1 byte down stack
             code += self.dec_reg(self.ESP)
@@ -238,24 +243,24 @@ class CodeGenerator:
             code += self.inc_reg(self.ESP)
         elif isinstance(node, IncByteNode):
             # Increment the byte pointed to by the stack pointer
-            code += '\xFE\x04\x24' # TODO
+            code += self.inc_esp_byte()
         elif isinstance(node, DecByteNode):
             # Decrement the byte pointed to by the stack pointer
-            code += '\xFE\x0C\x24' # TODO
+            code += self.dec_esp_byte()
         elif isinstance(node, OutputNode):
             # Call the write syscall with the stack pointer
             code += self.mov_ri(self.EAX, 0x4)
             code += self.mov_ri(self.EBX, 0x1)
             code += self.mov_rr(self.ECX, self.ESP)
             code += self.mov_ri(self.EDX, 0x1)
-            code += self.int(0x80)
+            code += self.int(self.SYSCALL)
         elif isinstance(node, InputNode):
             # Call the read syscall with the stack pointer
             code += self.mov_ri(self.EAX, 0x3)
             code += self.mov_ri(self.EBX, 0x0)
             code += self.mov_rr(self.ECX, self.ESP)
             code += self.mov_ri(self.EDX, 0x1)
-            code += self.int(0x80)
+            code += self.int(self.SYSCALL)
 
         return code
 
@@ -274,6 +279,21 @@ class CodeGenerator:
 
     def dec_reg(self, reg):
         return chr(self.DEC + reg)
+
+    def cmp_esp_byte(self, val):
+        return '\x80\x3C\x24' + chr(val)
+
+    def inc_esp_byte(self):
+        return '\xFE\x04\x24' # inc byte [esp]
+
+    def dec_esp_byte(self):
+        return '\xFE\x0C\x24' # dec byte [esp]
+
+    def jmp(self, rel):
+        return chr(self.JMP) + struct.pack('<i', rel)
+
+    def je(self, rel):
+        return self.JE + struct.pack('<i', rel)
 
     def int(self, name):
         return chr(self.INT) + chr(name)
@@ -358,8 +378,12 @@ if __name__ == '__main__':
         sys.exit(1)
 
     # Read brainfuck source
-    with open(sys.argv[1], 'r') as f:
-        source = f.read()
+    try:
+        with open(sys.argv[1], 'r') as f:
+            source = f.read()
+    except IOError:
+        sys.stderr.write('err: could not read input file\n')
+        sys.exit(1)
 
     # Perform lexical analysis
     tokens = Lexer(source).tokenize()
