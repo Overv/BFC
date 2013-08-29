@@ -189,114 +189,100 @@ class CodeGenerator:
 
     def __init__(self, tree):
         self.tree = tree
-        self.nesting = 0
 
-    # Generate machine code for parsed syntax tree
-    def generate(self):
-        self.code = ''
+    # Generate machine code for given node
+    def generate(self, node = None):
+        code = ''
 
-        # Write program node
-        self.write(self.tree)
+        if node == None:
+            # Start with code generation at the root node
+            return self.generate(self.tree)
+        elif isinstance(node, ProgramNode):
+            # Initialize 1 MB on the stack to zero
+            code += self.xor(self.EAX, self.EAX)
+            code += self.mov_ri(self.ECX, 0x40000)
+            code += self.mov_rr(self.EDI, self.ESP)
+            code += self.std()
+            code += self.rep_stos()
 
-        return self.code
-
-    # Write machine code for a node
-    def write(self, node):
-        if isinstance(node, ProgramNode):
-            self.write_start()
-
+            # Generate code for all commands in the program
             for node in node.nodes:
-                self.write(node)
+                code += self.generate(node)
 
-            self.write_end()
+            # Call exit syscall to end the program
+            code += self.xor(self.EAX, self.EAX)
+            code += self.inc_reg(self.EAX)
+            code += self.xor(self.EBX, self.EBX)
+            code += self.int(0x80)
         elif isinstance(node, LoopNode):
-            # Generate loop code and body with dummy addresses
-            loop_start = len(self.code)
-
-            self.code += '\x80\x3C\x24\x00'
-            self.code += '\x0F\x84\xFF\xFF\xFF' + chr(self.nesting)
-
-            body_start = len(self.code)
-
-            self.nesting += 1
+            # First generate code for loop body to calculate relative jumps
+            body_code = ''
 
             for node in node.nodes:
-                self.write(node)
+                body_code += self.generate(node)
 
-            self.nesting -= 1
+            # Add loop prelude with conditional jump to end of loop
+            code += '\x80\x3C\x24\x00'
+            code += '\x0F\x84' + struct.pack('<i', len(body_code) + 5)
 
-            self.code += '\xE9STRT'
+            # Append the loop body code
+            code += body_code
 
-            loop_end = len(self.code)
-
-            # Fill in relative addresses
-            self.code = self.code.replace('\xFF\xFF\xFF' + chr(self.nesting), struct.pack('<i', loop_end - body_start))
-            self.code = self.code.replace('STRT', struct.pack('<i', loop_start - loop_end))
+            # And finally add the unconditional jump back to the beginning
+            code += '\xE9' + struct.pack('<i', -len(body_code) - 15)
         elif isinstance(node, IncPtrNode):
-            self.dec_reg(self.ESP)
+            # Move 1 byte down stack
+            code += self.dec_reg(self.ESP)
         elif isinstance(node, DecPtrNode):
-            self.inc_reg(self.ESP)
+            # Move 1 byte up stack
+            code += self.inc_reg(self.ESP)
         elif isinstance(node, IncByteNode):
-            self.code += '\xFE\x04\x24' # TODO
+            # Increment the byte pointed to by the stack pointer
+            code += '\xFE\x04\x24' # TODO
         elif isinstance(node, DecByteNode):
-            self.code += '\xFE\x0C\x24' # TODO
+            # Decrement the byte pointed to by the stack pointer
+            code += '\xFE\x0C\x24' # TODO
         elif isinstance(node, OutputNode):
-            self.mov_ri(self.EAX, 0x4)
-            self.mov_ri(self.EBX, 0x1)
-            self.mov_rr(self.ECX, self.ESP)
-            self.mov_ri(self.EDX, 0x1)
-            self.int(0x80)
+            # Call the write syscall with the stack pointer
+            code += self.mov_ri(self.EAX, 0x4)
+            code += self.mov_ri(self.EBX, 0x1)
+            code += self.mov_rr(self.ECX, self.ESP)
+            code += self.mov_ri(self.EDX, 0x1)
+            code += self.int(0x80)
         elif isinstance(node, InputNode):
-            self.mov_ri(self.EAX, 0x3)
-            self.mov_ri(self.EBX, 0x0)
-            self.mov_rr(self.ECX, self.ESP)
-            self.mov_ri(self.EDX, 0x1)
-            self.int(0x80)
-        else:
-            raise Exception('unsupported node ' + str(node))
+            # Call the read syscall with the stack pointer
+            code += self.mov_ri(self.EAX, 0x3)
+            code += self.mov_ri(self.EBX, 0x0)
+            code += self.mov_rr(self.ECX, self.ESP)
+            code += self.mov_ri(self.EDX, 0x1)
+            code += self.int(0x80)
 
-    # Write program start code that initializes memory
-    def write_start(self):
-        self.xor(self.EAX, self.EAX)
-        self.mov_ri(self.ECX, 0x40000)
-        self.mov_rr(self.EDI, self.ESP)
-        self.std()
-        self.rep_stos()
-
-    # Write program exit code
-    def write_end(self):
-        self.xor(self.EAX, self.EAX)
-        self.inc_reg(self.EAX)
-        self.xor(self.EBX, self.EBX)
-        self.int(0x80)
+        return code
 
     # Assembler functions
     def mov_ri(self, dst, val):
-        self.code += chr(self.MOV_REG_IMM + dst)
-        self.code += struct.pack('<I', val)
+        return chr(self.MOV_REG_IMM + dst) + struct.pack('<I', val)
 
     def mov_rr(self, dst, src):
-        self.code += chr(self.MOV_REG_REG)
-        self.code += chr(dst | src << 3 | self.MOD_RR << 6)
+        return chr(self.MOV_REG_REG) + chr(dst | src << 3 | self.MOD_RR << 6)
 
     def xor(self, dst, src):
-        self.code += chr(self.XOR)
-        self.code += chr(dst | src << 3 | self.MOD_RR << 6)
+        return chr(self.XOR) + chr(dst | src << 3 | self.MOD_RR << 6)
 
     def inc_reg(self, reg):
-        self.code += chr(self.INC + reg)
+        return chr(self.INC + reg)
 
     def dec_reg(self, reg):
-        self.code += chr(self.DEC + reg)
+        return chr(self.DEC + reg)
 
     def int(self, name):
-        self.code += chr(self.INT) + chr(name)
+        return chr(self.INT) + chr(name)
 
     def std(self):
-        self.code += chr(self.STD)
+        return chr(self.STD)
 
     def rep_stos(self):
-        self.code += chr(self.REP) + chr(self.STOSD)
+        return chr(self.REP) + chr(self.STOSD)
 
 #
 # Linker
