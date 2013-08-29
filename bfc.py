@@ -1,5 +1,8 @@
+#!/usr/bin/python
+
 import sys
 import os
+import stat
 import struct
 
 #
@@ -396,6 +399,10 @@ class Linker:
             self.write_header(f)
             self.write_program_header(f)
             f.write(code)
+
+        # Add executable permission
+        perms = stat.S_IMODE(os.stat(filename).st_mode)
+        os.chmod(filename, perms | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     # Write ELF header
     # http://www.sco.com/developers/gabi/1998-04-29/ch4.eheader.html

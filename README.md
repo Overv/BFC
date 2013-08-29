@@ -25,12 +25,12 @@ Usage
 Prepare a brainfuck source file, like `tests/hello.bf` and invoke the compiler
 by running:
 
-    $ ./bfc.py hello.bf
+    $ ./bfc.py tests/hello.bf
 
 If the file could be read and correctly parsed, then an executable named `hello`
 will be produced in the same directory.
 
-    $ ./hello
+    $ tests/hello
     Hello World!
 
 Tests
