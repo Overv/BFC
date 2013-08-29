@@ -50,10 +50,19 @@ class Lexer:
 
 class Node: pass
 
-class IncPtrNode(Node): pass
-class DecPtrNode(Node): pass
-class IncByteNode(Node): pass
-class DecByteNode(Node): pass
+# Used by optimizer to merge certain nodes with a repeat count
+class MergeableNode(Node):
+    def __init__(self, count = 1):
+        self.count = count
+
+    def __eq__(self, other):
+        return isinstance(other, self.__class__)
+
+class IncPtrNode(MergeableNode): pass
+class DecPtrNode(MergeableNode): pass
+class IncByteNode(MergeableNode): pass
+class DecByteNode(MergeableNode): pass
+
 class OutputNode(Node): pass
 class InputNode(Node): pass
 
@@ -156,6 +165,43 @@ class Parser:
         return LoopNode(nodes)
 
 #
+# Optimizer
+#
+
+class Optimizer:
+    def __init__(self, tree):
+        self.tree = tree
+
+    def optimize(self, node = None):
+        if node == None:
+            # Start with optimization at root node
+            return self.optimize(self.tree)
+        elif isinstance(node, ProgramNode) or isinstance(node, LoopNode):
+            # Optimize nodes within root and loop nodes
+            nodes = []
+
+            last_node = None
+            repeats = 0
+
+            for n in node.nodes:
+                n = self.optimize(n)
+
+                # Limit optimization to 255 repetitions (very rare anyway)
+                if isinstance(n, MergeableNode) and n == last_node and last_node.count < 255:
+                    last_node.count += 1
+                else:
+                    nodes.append(n)
+                    last_node = n
+
+            if isinstance(node, ProgramNode):
+                return ProgramNode(nodes)
+            else:
+                return LoopNode(nodes)
+        else:
+            # Other nodes don't contain any nodes to optimize
+            return node
+
+#
 # Code generator
 #
 
@@ -167,6 +213,7 @@ class CodeGenerator:
     MOV_REG_IMM = 0xB8
     MOV_REG_REG = 0x89
     XOR = 0x31
+    ADDSUB = 0x83 # Opcode extension determines add/sub
     INC = 0x40
     DEC = 0x48
     INT = 0xCD
@@ -236,17 +283,29 @@ class CodeGenerator:
             # And finally add the unconditional jump back to the beginning
             code += self.jmp(-len(body_code) - 15)
         elif isinstance(node, IncPtrNode):
-            # Move 1 byte down stack
-            code += self.dec_reg(self.ESP)
+            # Move down stack
+            if node.count == 1:
+                code += self.dec_reg(self.ESP)
+            else:
+                code += self.sub_reg(self.ESP, node.count)  
         elif isinstance(node, DecPtrNode):
-            # Move 1 byte up stack
-            code += self.inc_reg(self.ESP)
+            # Move up stack
+            if node.count == 1:
+                code += self.inc_reg(self.ESP)
+            else:
+                code += self.add_reg(self.ESP, node.count)
         elif isinstance(node, IncByteNode):
-            # Increment the byte pointed to by the stack pointer
-            code += self.inc_esp_byte()
+            # Increment the byte at the stack pointer
+            if node.count == 1:
+                code += self.inc_esp_byte()
+            else:
+                code += self.add_esp_byte(node.count)
         elif isinstance(node, DecByteNode):
-            # Decrement the byte pointed to by the stack pointer
-            code += self.dec_esp_byte()
+            # Decrement the byte at the stack pointer
+            if node.count == 1:
+                code += self.dec_esp_byte()
+            else:
+                code += self.sub_esp_byte(node.count)
         elif isinstance(node, OutputNode):
             # Call the write syscall with the stack pointer
             code += self.mov_ri(self.EAX, 0x4)
@@ -274,20 +333,34 @@ class CodeGenerator:
     def xor(self, dst, src):
         return chr(self.XOR) + chr(dst | src << 3 | self.MOD_RR << 6)
 
+    def add_reg(self, dst, val):
+        # Add 8-bit value to 32-bit register (opcode extension = 0)
+        return chr(self.ADDSUB) + chr(dst | self.MOD_RR << 6) + chr(val)
+
+    def sub_reg(self, dst, val):
+        # Subtract 8-bit value from 32-bit register (opcode extension = 5)
+        return chr(self.ADDSUB) + chr(dst | 5 << 3 | self.MOD_RR << 6) + chr(val)
+
+    def add_esp_byte(self, val):
+        return '\x80\x04\x24' + chr(val)
+
+    def sub_esp_byte(self, val):
+        return '\x80\x2C\x24' + chr(val)
+
     def inc_reg(self, reg):
         return chr(self.INC + reg)
 
     def dec_reg(self, reg):
         return chr(self.DEC + reg)
 
-    def cmp_esp_byte(self, val):
-        return '\x80\x3C\x24' + chr(val)
-
     def inc_esp_byte(self):
         return '\xFE\x04\x24' # inc byte [esp]
 
     def dec_esp_byte(self):
         return '\xFE\x0C\x24' # dec byte [esp]
+
+    def cmp_esp_byte(self, val):
+        return '\x80\x3C\x24' + chr(val) # cmp byte [esp], val
 
     def jmp(self, rel):
         return chr(self.JMP) + struct.pack('<i', rel)
@@ -394,6 +467,9 @@ if __name__ == '__main__':
     except ParseException as e:
         sys.stderr.write('err: ' + str(e) + '\n')
         sys.exit(1)
+
+    # Optimize
+    tree = Optimizer(tree).optimize()
 
     # Generate code
     code = CodeGenerator(tree).generate()

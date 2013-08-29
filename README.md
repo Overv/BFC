@@ -39,27 +39,36 @@ through the
 
 - Lexing
 - Parsing
+- Optimizing
 - Compiling
 - Linking
 
 passes to result in an output executable. The lexer simply discards all
 characters that are not part of the brainfuck language and turns the characters
-into tokens, implemented as child classes of `Token`. The parser is a recursive
-descent parser and basically only exists for loops. It's included for
-completeness more than anything else, although the tree it creates does help a
-bit with code generation logic.
+into tokens, implemented as child classes of `Token`.
 
-The parser is implemented using the recursive-descent approach, according to the
-following LL(1) grammar in EBNF form:
+The parser is a recursive descent parser and basically only exists for loops.
+It's included for completeness more than anything else, although the tree it
+creates does help a bit with code generation logic.
+
+The parser is implemented according to the following LL(1) grammar in EBNF form:
 
     program  = { command | loop }
     command  = ">" | "<" | "+" | "-" | "." | ","
     loop     = "[", { command | loop }, "]
 
-Each node in the tree outputs one or two
-instructions that are written to a byte buffer. Jumps are written with the
-correct addresses corresponding to loop beginnings. The final pass creates a
-bare-bones ELF file and puts the program in an executable section in memory.
+The optimizer merges repeated increment and decrement instructions, so that the
+code generator can easily emit add and subtract instructions instead.
+
+The code generator produces one or two instructions for each node in the AST.
+Jumps are written with the correct relative addresses corresponding to loop
+beginnings and endings. Currently it always uses the 16/32 bit jump instructions
+for simplicity. Optimization for executable size could be added by falling back
+to 8 bit jumps if possible.
+
+The final pass creates a bare-bones ELF file that instructs the loader to load
+the entire file into memory (as is common with executables) and run the program
+positioned in the file after the ELF and program header.
 
 There are no checks at runtime, so if you mess up the program, it will happily
 write or read memory where it shouldn't. Because the behaviour of brainfuck is
